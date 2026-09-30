@@ -4,13 +4,16 @@
 читается из окружения процесса и ИИ не передаётся.
 """
 
+import functools
 import json
 import os
 
 from mcp.server.mcpserver import MCPServer
 
-from .checks import assess_member, parse_allowed_channels
+from . import workspace
+from .checks import assess_member, normalize_channel, parse_allowed_channels
 from .client import TelegramClient, TelegramError
+from .validate import check_post
 
 CLIENT = TelegramClient(os.environ.get("TELEGRAM_BOT_TOKEN", ""))
 
@@ -30,6 +33,37 @@ def _error(exc):
 
 def allowed_channels():
     return parse_allowed_channels(os.environ.get("TELEGRAM_ALLOWED_CHANNELS", ""))
+
+
+def resolve_channel(channel=None):
+    """Канал из списка разрешённых. Если канал один, его можно не указывать."""
+    allowed = allowed_channels()
+    if not allowed:
+        raise TelegramError("Не задан список каналов TELEGRAM_ALLOWED_CHANNELS.", "NO_CHANNELS")
+    if not channel:
+        if len(allowed) == 1:
+            return allowed[0]
+        raise TelegramError("Укажите канал: " + ", ".join(allowed), "CHANNEL_REQUIRED")
+    try:
+        normalized = normalize_channel(channel)
+    except ValueError as exc:
+        raise TelegramError(str(exc), "BAD_CHANNEL") from None
+    if normalized not in allowed:
+        raise TelegramError(f"Канал {normalized} не входит в список разрешённых.", "CHANNEL_NOT_ALLOWED")
+    return normalized
+
+
+def tool_result(func):
+    """Результат инструмента — JSON; любая ошибка становится понятным ответом, а не стектрейсом."""
+    @functools.wraps(func)
+    def run(*args, **kwargs):
+        try:
+            return json.dumps(func(*args, **kwargs), ensure_ascii=False, indent=2)
+        except TelegramError as exc:
+            return _error(exc)
+        except Exception as exc:  # noqa: BLE001
+            return _error(TelegramError(f"{type(exc).__name__}: {exc}", "INTERNAL_ERROR"))
+    return run
 
 
 def check(client=None):
@@ -66,13 +100,60 @@ def check(client=None):
         "Предупреждает о недостающих и лишних правах. Ничего не отправляет и не меняет."
     )
 )
-def telegram_check() -> str:
-    try:
-        return json.dumps(check(), ensure_ascii=False, indent=2)
-    except TelegramError as exc:
-        return _error(exc)
-    except Exception as exc:  # noqa: BLE001 — вместо стектрейса отдаём понятную причину
-        return _error(TelegramError(f"{type(exc).__name__}: {exc}", "INTERNAL_ERROR"))
+@tool_result
+def telegram_check() -> dict:
+    return check()
+
+
+@mcp.tool(
+    description=(
+        "Создать папку канала (drafts/, published/, AGENTS.md, STYLE.md, content-plan.md). "
+        "Существующие файлы не меняются. Вызывается один раз для канала."
+    )
+)
+@tool_result
+def telegram_init_channel(channel: str | None = None) -> dict:
+    return workspace.init_channel(resolve_channel(channel))
+
+
+@mcp.tool(
+    description=(
+        "Сохранить черновик поста в формате Telegram-HTML (<b>, <i>, <code>, <pre>, <a href>; не Markdown). "
+        "name: латиница, цифры, «-», «_». Существующий черновик заменяется только при overwrite=true. "
+        "В канал ничего не отправляется."
+    )
+)
+@tool_result
+def telegram_save_draft(name: str, text: str, channel: str | None = None, overwrite: bool = False) -> dict:
+    channel = resolve_channel(channel)
+    path = workspace.save_draft(channel, name, text, overwrite)
+    return {"status": "saved", "path": path, **{k: v for k, v in check_post(text).items() if k != "ok"}}
+
+
+@mcp.tool(description="Прочитать черновик поста. Ничего не меняет.")
+@tool_result
+def telegram_read_draft(name: str, channel: str | None = None) -> dict:
+    channel = resolve_channel(channel)
+    return {"name": name, "text": workspace.read_draft(channel, name)}
+
+
+@mcp.tool(description="Список черновиков канала. Ничего не меняет.")
+@tool_result
+def telegram_list_drafts(channel: str | None = None) -> dict:
+    channel = resolve_channel(channel)
+    return {"channel": channel, "drafts": workspace.list_drafts(channel)}
+
+
+@mcp.tool(
+    description=(
+        "Проверить черновик: теги Telegram-HTML, ссылки, длина (до 4096 символов, для подписи к картинке 1024), "
+        "следы Markdown. Возвращает ошибки, предупреждения и хэш текста. Ничего не отправляет."
+    )
+)
+@tool_result
+def telegram_check_draft(name: str, channel: str | None = None, has_image: bool = False) -> dict:
+    channel = resolve_channel(channel)
+    return {"name": name, **check_post(workspace.read_draft(channel, name), has_image)}
 
 
 def main():
