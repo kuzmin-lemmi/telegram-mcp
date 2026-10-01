@@ -13,7 +13,7 @@ from mcp.server.mcpserver import MCPServer
 from . import workspace
 from .checks import assess_member, normalize_channel, parse_allowed_channels
 from .client import TelegramClient, TelegramError
-from .validate import check_post
+from .validate import check_post, normalize_text
 
 CLIENT = TelegramClient(os.environ.get("TELEGRAM_BOT_TOKEN", ""))
 
@@ -154,6 +154,94 @@ def telegram_list_drafts(channel: str | None = None) -> dict:
 def telegram_check_draft(name: str, channel: str | None = None, has_image: bool = False) -> dict:
     channel = resolve_channel(channel)
     return {"name": name, **check_post(workspace.read_draft(channel, name), has_image)}
+
+
+def owner_candidates(client=None):
+    """Люди, написавшие боту в личку: кандидаты на роль получателя просмотра."""
+    client = client or CLIENT
+    found = {}
+    for update in client.get_updates():
+        message = update.get("message") or {}
+        sender = message.get("from") or {}
+        if (message.get("chat") or {}).get("type") != "private" or sender.get("is_bot") or "id" not in sender:
+            continue
+        found[sender["id"]] = {
+            "user_id": sender["id"],
+            "name": sender.get("first_name", ""),
+            "username": sender.get("username"),
+            "last_message": (message.get("text") or "")[:40],
+        }
+    return list(found.values())
+
+
+@mcp.tool(
+    description=(
+        "Показать, кто писал боту в личку (нужно один раз, чтобы выбрать получателя просмотров). "
+        "Сначала владелец должен отправить боту /start. Ничего не меняет."
+    )
+)
+@tool_result
+def telegram_find_owner() -> dict:
+    candidates = owner_candidates()
+    if not candidates:
+        raise TelegramError(
+            "Боту пока никто не писал (или сообщениям больше суток). Откройте бота в Telegram и нажмите /start.",
+            "NO_UPDATES",
+        )
+    return {"candidates": candidates, "next": "Покажите список автору и вызовите telegram_set_owner с его user_id."}
+
+
+@mcp.tool(
+    description=(
+        "Запомнить получателя просмотров. user_id должен быть из telegram_find_owner, "
+        "и его должен подтвердить автор (имя и username). Посты будут приходить только ему."
+    )
+)
+@tool_result
+def telegram_set_owner(user_id: int) -> dict:
+    for candidate in owner_candidates():
+        if candidate["user_id"] == user_id:
+            workspace.save_owner(user_id, candidate["name"])
+            return {"status": "saved", "owner": candidate}
+    raise TelegramError(f"user_id {user_id} не писал боту: выберите из telegram_find_owner.", "UNKNOWN_USER")
+
+
+def preview(name, channel=None, client=None):
+    client = client or CLIENT
+    channel = resolve_channel(channel)
+    text = workspace.read_draft(channel, name)
+    result = check_post(text)
+    if not result["ok"]:
+        raise TelegramError("Черновик не прошёл проверку: " + " ".join(result["errors"]), "DRAFT_INVALID")
+    owner = workspace.get_owner()
+    try:
+        sent = client.send_message(owner["user_id"], normalize_text(text))
+    except TelegramError as exc:
+        if "chat not found" in str(exc) or "Forbidden" in str(exc):
+            raise TelegramError(
+                "Бот не может написать получателю. Откройте бота в Telegram и нажмите /start.", "OWNER_UNREACHABLE"
+            ) from None
+        raise
+    workspace.record_preview(channel, name, result["sha256"], sent["message_id"])
+    return {
+        "status": "sent_to_owner",
+        "draft": name,
+        "sha256": result["sha256"],
+        "warnings": result["warnings"],
+        "note": "Пост отправлен только автору в личку, в канал не публиковался.",
+    }
+
+
+@mcp.tool(
+    description=(
+        "Прислать черновик автору в личные сообщения от бота — так он выглядит в канале. "
+        "Только автору, в канал не отправляется. Черновик с ошибками не отправляется. "
+        "После просмотра автор решает, править или публиковать."
+    )
+)
+@tool_result
+def telegram_preview(name: str, channel: str | None = None) -> dict:
+    return preview(name, channel)
 
 
 def main():

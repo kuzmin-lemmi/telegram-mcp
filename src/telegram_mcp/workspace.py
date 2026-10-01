@@ -5,9 +5,11 @@
 разрешения не заменяется.
 """
 
+import json
 import os
 import re
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .client import TelegramError
@@ -140,3 +142,51 @@ def save_draft(channel, name, text, overwrite=False):
             f"Черновик «{name}» уже есть. Чтобы заменить, передайте overwrite=true.", "DRAFT_EXISTS"
         ) from None
     return str(path)
+
+
+# -- владелец (кому бот присылает пост на просмотр) -----------------------------
+
+
+def _json_read(path, default):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return default
+    except ValueError:
+        raise TelegramError(f"Файл {path.name} повреждён. Проверьте его или удалите.", "BAD_STATE_FILE") from None
+
+
+def get_owner():
+    """Чат автора: сначала TELEGRAM_OWNER_ID, затем файл .owner.json в корне каналов."""
+    env = os.environ.get("TELEGRAM_OWNER_ID", "").strip()
+    if env:
+        if not env.lstrip("-").isdigit():
+            raise TelegramError("TELEGRAM_OWNER_ID должен быть числом.", "BAD_OWNER")
+        return {"user_id": int(env), "source": "env"}
+    data = _json_read(workspace_root() / ".owner.json", None)
+    if not data:
+        raise TelegramError(
+            "Получатель просмотра не задан. Напишите боту /start, затем вызовите telegram_find_owner "
+            "и telegram_set_owner.", "NO_OWNER",
+        )
+    return {**data, "source": "file"}
+
+
+def save_owner(user_id, name):
+    root = workspace_root()
+    root.mkdir(parents=True, exist_ok=True)
+    _atomic_write(root / ".owner.json", json.dumps({"user_id": user_id, "name": name}, ensure_ascii=False), True)
+
+
+# -- следы показа: какой текст автор уже видел ---------------------------------
+
+
+def record_preview(channel, name, sha256, message_id):
+    path = channel_folder(channel) / ".previews.json"
+    data = _json_read(path, {})
+    data[name] = {"sha256": sha256, "message_id": message_id, "at": datetime.now(timezone.utc).isoformat()}
+    _atomic_write(path, json.dumps(data, ensure_ascii=False, indent=2), True)
+
+
+def get_preview(channel, name):
+    return _json_read(channel_folder(channel) / ".previews.json", {}).get(name)

@@ -68,3 +68,10 @@ class TelegramClient:
 
     def get_chat_member(self, chat_id, user_id):
         return self.call("getChatMember", chat_id=chat_id, user_id=user_id)
+
+    def get_updates(self):
+        """Непрочитанные сообщения боту. Не подтверждает их (offset не передаётся)."""
+        return self.call("getUpdates", limit=100, timeout=0, allowed_updates=["message"])
+
+    def send_message(self, chat_id, text, parse_mode="HTML"):
+        return self.call("sendMessage", chat_id=chat_id, text=text, parse_mode=parse_mode)

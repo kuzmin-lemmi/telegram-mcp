@@ -31,10 +31,14 @@ MARKDOWN_HINTS = (
 )
 
 
+def normalize_text(text):
+    """Текст ровно в том виде, в каком он уходит в Telegram и по которому считается хэш."""
+    return text.replace("\r\n", "\n").strip()
+
+
 def content_hash(text):
     """Хэш текста поста. Перевод строк CRLF и пробелы по краям не считаются изменением."""
-    normalized = text.replace("\r\n", "\n").strip()
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return hashlib.sha256(normalize_text(text).encode("utf-8")).hexdigest()
 
 
 class _Checker(HTMLParser):
@@ -85,7 +89,7 @@ class _Checker(HTMLParser):
 def check_post(text, has_image=False):
     """Проверка текста поста. Возвращает словарь с ошибками, предупреждениями, длиной и хэшем."""
     errors, warnings = [], []
-    body = text.replace("\r\n", "\n").strip()
+    body = normalize_text(text)
     if not body:
         errors.append("Пост пустой.")
 
