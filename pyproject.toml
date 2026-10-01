@@ -12,6 +12,7 @@ authors = [{ name = "kuzmin-lemmi" }]
 keywords = ["telegram", "mcp", "model-context-protocol", "claude", "opencode"]
 dependencies = [
     "mcp>=2.1,<3",
+    "keyring>=25",
 ]
 
 [project.optional-dependencies]
@@ -21,6 +22,7 @@ dev = [
 
 [project.scripts]
 telegram-mcp = "telegram_mcp.server:main"
+telegram-mcp-setup = "telegram_mcp.setup:main"
 
 [tool.hatch.version]
 path = "src/telegram_mcp/__init__.py"

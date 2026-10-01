@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "telegram": {
+      "command": "C:\\path\\to\\telegram-mcp\\.venv\\Scripts\\telegram-mcp.exe",
+      "env": {
+        "TELEGRAM_ALLOWED_CHANNELS": "@bot_dev_py_ai"
+      }
+    }
+  }
+}

@@ -2,7 +2,7 @@
 
 MCP-сервер, с помощью которого ИИ (OpenCode, Claude Desktop, Claude Code) готовит посты для Telegram-канала. Сначала пост показывается автору в личных сообщениях, и только после явного «да» уходит в канал. Материал для постов ИИ берёт из курсов через [Stepik MCP](https://github.com/kuzmin-lemmi/Stepik_mcp).
 
-> **Статус: часть 4 из 5.** Можно вести черновики, смотреть их у себя в Telegram и публиковать в канал. Остались подключение к клиентам и связка со Stepik.
+> **Статус: части 1–5 готовы.** Остаётся проверка на настоящем боте и канале.
 
 ## План
 
@@ -12,7 +12,7 @@ MCP-сервер, с помощью которого ИИ (OpenCode, Claude Desk
 | 2 | Папка канала: черновики и проверка поста | ✅ |
 | 3 | Просмотр: бот присылает пост автору в личку | ✅ |
 | 4 | Публикация и правка: список каналов, одобрение, запись `published/` | ✅ |
-| 5 | Конфиги клиентов, инструкция для ИИ, связка со Stepik | ⏳ |
+| 5 | Токен в защищённом хранилище, конфиги клиентов, инструкция для ИИ, связка со Stepik | ✅ |
 
 ## Установка
 
@@ -25,42 +25,52 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .
 ```
 
+## Токен бота
+
+Токен от @BotFather сохраняется **один раз** в защищённом хранилище системы (в Windows это Диспетчер учётных данных). Ни в чат, ни в конфиги он не попадает.
+
+```powershell
+.\.venv\Scripts\telegram-mcp-setup.exe
+```
+
+Команда спросит токен (символы при вводе не видны), проверит его у Telegram и покажет только имя бота. `telegram-mcp-setup --status` покажет, сохранён ли токен, `--delete` удалит его. Если токен когда-либо попал в чат, перевыпустите его у @BotFather командой `/revoke`.
+
+Запасной вариант: переменная окружения `TELEGRAM_BOT_TOKEN` (главнее хранилища), но тогда токен лежит в конфиге открытым текстом.
+
 ## Настройка
 
 | Переменная | Назначение |
 | --- | --- |
-| `TELEGRAM_BOT_TOKEN` | Токен бота от @BotFather. **Никому не присылайте** |
 | `TELEGRAM_ALLOWED_CHANNELS` | Каналы через запятую: `@bot_dev_py_ai`. Только в них сервер будет работать |
 | `TELEGRAM_OWNER_ID` | Необязательно. Номер вашего чата, если не хотите привязывать через `telegram_set_owner` |
 | `TELEGRAM_CHANNEL_ROOT` | Папка с каналами (абсолютный путь). По умолчанию `~/Channels`, то есть `C:\Users\<вы>\Channels` |
+| `TELEGRAM_BOT_TOKEN` | Необязательно, см. выше |
 
 Бот должен быть администратором канала **только с правами «Публикация сообщений» и «Редактирование сообщений»**. Остальные права выключите: `telegram_check` предупредит, если они включены.
 
-### OpenCode
+## Подключение к клиентам
 
-```jsonc
-"telegram": {
-  "type": "local",
-  "command": ["C:\\path\\to\\telegram-mcp\\.venv\\Scripts\\python.exe", "-m", "telegram_mcp"],
-  "enabled": true,
-  "environment": {
-    "TELEGRAM_BOT_TOKEN": "<токен>",
-    "TELEGRAM_ALLOWED_CHANNELS": "@bot_dev_py_ai"
-  }
-}
+Готовые примеры лежат в [`examples/`](examples). Замените `C:\path\to\telegram-mcp` на свой путь и перезапустите клиент.
+
+**OpenCode** (`~/.config/opencode/opencode.jsonc`): блок `mcp.telegram` из [`examples/opencode.jsonc`](examples/opencode.jsonc).
+
+**Claude Desktop** (`%APPDATA%\Claude\claude_desktop_config.json`): блок `mcpServers.telegram` из [`examples/claude_desktop_config.json`](examples/claude_desktop_config.json).
+
+**Claude Code:**
+
+```powershell
+claude mcp add telegram --scope user -e TELEGRAM_ALLOWED_CHANNELS=@bot_dev_py_ai -- C:\path\to\telegram-mcp\.venv\Scripts\telegram-mcp.exe
 ```
 
-### Claude Desktop
+> Для `telegram_publish` и `telegram_edit_published` **не включайте автоматическое разрешение**: пусть клиент каждый раз спрашивает. Это ещё одна защита от случайной публикации.
 
-```json
-"telegram": {
-  "command": "C:\\path\\to\\telegram-mcp\\.venv\\Scripts\\telegram-mcp.exe",
-  "env": {
-    "TELEGRAM_BOT_TOKEN": "<токен>",
-    "TELEGRAM_ALLOWED_CHANNELS": "@bot_dev_py_ai"
-  }
-}
-```
+### Инструкция для ИИ
+
+[`skills/telegram-post/SKILL.md`](skills/telegram-post) учит ИИ порядку работы: черновик, проверка, показ, ваше «публикуй», публикация. Там же сценарии «пост из урока Stepik» и «пост из ошибок учеников» и составление `STYLE.md` по вашим прошлым постам. Скопируйте папку `telegram-post` в `~/.claude/skills/` (Claude Code) или в папку skills вашего OpenCode. Те же основные правила ИИ получает и без skill, через описание инструментов.
+
+## Связка со Stepik
+
+Два сервера не общаются друг с другом: их связывает ИИ, подключённый к обоим. Stepik MCP даёт уроки, комментарии и ошибки учеников, Telegram MCP показывает и публикует пост. Подробности и порядок шагов в skill выше.
 
 ## Инструменты
 

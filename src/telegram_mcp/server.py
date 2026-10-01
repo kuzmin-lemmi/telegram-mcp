@@ -10,12 +10,12 @@ import os
 
 from mcp.server.mcpserver import MCPServer
 
-from . import publishing, workspace
+from . import publishing, token_store, workspace
 from .checks import assess_member, normalize_channel, parse_allowed_channels
 from .client import TelegramClient, TelegramError
 from .validate import check_post, normalize_text
 
-CLIENT = TelegramClient(os.environ.get("TELEGRAM_BOT_TOKEN", ""))
+CLIENT = TelegramClient(token_store.get_token)
 
 mcp = MCPServer(
     name="telegram",

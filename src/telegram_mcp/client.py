@@ -21,8 +21,19 @@ class TelegramError(Exception):
 
 class TelegramClient:
     def __init__(self, token, api_url=API_URL):
-        self._token = token
+        """``token``: строка или функция, возвращающая токен (читается при первом запросе)."""
+        self._source = token
+        self._cached = None
         self._api_url = api_url
+
+    @property
+    def _token(self):
+        if self._cached is None:
+            value = self._source() if callable(self._source) else self._source
+            if not value:
+                return ""  # пустое не кэшируем: токен могут сохранить, пока сервер работает
+            self._cached = value
+        return self._cached
 
     def _redact(self, text):
         text = str(text)
@@ -50,7 +61,7 @@ class TelegramClient:
 
     def call(self, method, **params):
         if not self._token:
-            raise TelegramError("Не задан TELEGRAM_BOT_TOKEN", "NO_TOKEN")
+            raise TelegramError("Токен бота не задан. Выполните в терминале: telegram-mcp-setup", "NO_TOKEN")
         payload = {key: value for key, value in params.items() if value is not None}
         data = self._post(method, payload)
         if not data.get("ok"):

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "telegram": {
+      "type": "local",
+      "command": ["C:\\path\\to\\telegram-mcp\\.venv\\Scripts\\python.exe", "-m", "telegram_mcp"],
+      "enabled": true,
+      "environment": {
+        "TELEGRAM_ALLOWED_CHANNELS": "@bot_dev_py_ai"
+      }
+    }
+  }
+}
