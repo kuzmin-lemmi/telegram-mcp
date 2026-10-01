@@ -75,3 +75,6 @@ class TelegramClient:
 
     def send_message(self, chat_id, text, parse_mode="HTML"):
         return self.call("sendMessage", chat_id=chat_id, text=text, parse_mode=parse_mode)
+
+    def edit_message_text(self, chat_id, message_id, text, parse_mode="HTML"):
+        return self.call("editMessageText", chat_id=chat_id, message_id=message_id, text=text, parse_mode=parse_mode)

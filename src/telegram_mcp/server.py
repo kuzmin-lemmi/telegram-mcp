@@ -10,7 +10,7 @@ import os
 
 from mcp.server.mcpserver import MCPServer
 
-from . import workspace
+from . import publishing, workspace
 from .checks import assess_member, normalize_channel, parse_allowed_channels
 from .client import TelegramClient, TelegramError
 from .validate import check_post, normalize_text
@@ -22,6 +22,8 @@ mcp = MCPServer(
     instructions=(
         "Сервер работает с Telegram-каналами автора. Публиковать можно только в каналы из списка "
         "TELEGRAM_ALLOWED_CHANNELS. Ничего не публикуй без явного подтверждения пользователя в чате. "
+        "Порядок работы с постом: черновик → проверка → telegram_preview (автор смотрит у себя в Telegram) → "
+        "его явное «публикуй» → telegram_publish. Пост нельзя удалить, поэтому не торопись. "
         "Сначала проверь связь инструментом telegram_check."
     ),
 )
@@ -242,6 +244,39 @@ def preview(name, channel=None, client=None):
 @tool_result
 def telegram_preview(name: str, channel: str | None = None) -> dict:
     return preview(name, channel)
+
+
+@mcp.tool(
+    description=(
+        "ОПУБЛИКОВАТЬ пост в канал. Вызывай только после того, как автор в чате явно сказал «публикуй» "
+        "именно для этого текста. Порядок: telegram_save_draft → telegram_check_draft → telegram_preview → "
+        "автор смотрит у себя в Telegram → его «да» → telegram_publish с sha256 из ответа telegram_preview. "
+        "Откажет, если текст не показывали автору, изменился после показа, хэш не совпал, канал не из списка "
+        "или пост уже опубликован. Отменить публикацию этим сервером нельзя: удаления нет."
+    )
+)
+@tool_result
+def telegram_publish(name: str, confirm_sha256: str, channel: str | None = None) -> dict:
+    return publishing.publish(CLIENT, resolve_channel(channel), name, confirm_sha256)
+
+
+@mcp.tool(
+    description=(
+        "ИСПРАВИТЬ уже вышедший пост (например, опечатку). Тот же порядок, что при публикации: "
+        "сохранить новую версию черновика с overwrite=true → telegram_preview → «да» автора → "
+        "telegram_edit_published с новым sha256. Прежний текст сохраняется в записи published/."
+    )
+)
+@tool_result
+def telegram_edit_published(name: str, confirm_sha256: str, channel: str | None = None) -> dict:
+    return publishing.edit_published(CLIENT, resolve_channel(channel), name, confirm_sha256)
+
+
+@mcp.tool(description="Список вышедших постов канала (имя, дата, ссылка). Ничего не меняет.")
+@tool_result
+def telegram_list_published(channel: str | None = None) -> dict:
+    channel = resolve_channel(channel)
+    return {"channel": channel, "published": workspace.list_published(channel)}
 
 
 def main():

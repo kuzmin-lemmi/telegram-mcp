@@ -190,3 +190,52 @@ def record_preview(channel, name, sha256, message_id):
 
 def get_preview(channel, name):
     return _json_read(channel_folder(channel) / ".previews.json", {}).get(name)
+
+
+# -- записи о вышедших постах (published/) ---------------------------------------
+
+
+def published_path(channel, name):
+    draft_path(channel, name)  # проверяет имя
+    return channel_folder(channel) / "published" / f"{name}.json"
+
+
+def reserve_published(channel, name, data):
+    """Занять запись о публикации ДО отправки. Существующая запись — отказ (защита от дублей)."""
+    path = published_path(channel, name)
+    if not path.parent.is_dir():
+        raise TelegramError("Папка канала не создана. Вызовите telegram_init_channel.", "NOT_INITIALIZED")
+    try:
+        _atomic_write(path, json.dumps(data, ensure_ascii=False, indent=2), replace=False)
+    except FileExistsError:
+        existing = read_published(channel, name)
+        state = (existing or {}).get("status")
+        hint = (
+            "Отправка была начата, но результат не записан. Проверьте канал вручную: пост мог выйти."
+            if state == "sending" else "Пост уже опубликован. Для правки используйте telegram_edit_published."
+        )
+        raise TelegramError(f"Для «{name}» уже есть запись о публикации. {hint}", "ALREADY_PUBLISHED") from None
+    return path
+
+
+def write_published(channel, name, data):
+    _atomic_write(published_path(channel, name), json.dumps(data, ensure_ascii=False, indent=2), replace=True)
+
+
+def release_published(channel, name):
+    published_path(channel, name).unlink(missing_ok=True)
+
+
+def read_published(channel, name):
+    return _json_read(published_path(channel, name), None)
+
+
+def list_published(channel):
+    folder = channel_folder(channel) / "published"
+    if not folder.is_dir():
+        raise TelegramError("Папка канала не создана. Вызовите telegram_init_channel.", "NOT_INITIALIZED")
+    result = []
+    for path in sorted(folder.glob("*.json")):
+        data = _json_read(path, {})
+        result.append({"name": path.stem, **{k: data.get(k) for k in ("status", "published_at", "link", "message_id")}})
+    return result
