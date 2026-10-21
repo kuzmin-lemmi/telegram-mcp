@@ -1,7 +1,7 @@
 """MCP-сервер Telegram: подготовка и публикация постов в канал.
 
-Транспорт stdio (OpenCode, Claude Desktop, Claude Code). Токен бота
-читается из окружения процесса и ИИ не передаётся.
+Транспорт stdio (OpenCode, Claude Desktop, Claude Code). Вход в аккаунт
+и токен бота читаются из хранилища ОС и ИИ не передаются.
 """
 
 import functools
@@ -11,11 +11,13 @@ import os
 from mcp.server.mcpserver import MCPServer
 
 from . import publishing, token_store, workspace
-from .checks import assess_member, normalize_channel, parse_allowed_channels
+from .account import AccountClient
+from .checks import assess_account, normalize_channel, parse_allowed_channels
 from .client import TelegramClient, TelegramError
 from .validate import check_post, normalize_text
 
 CLIENT = TelegramClient(token_store.get_token)
+ACCOUNT = AccountClient()
 
 mcp = MCPServer(
     name="telegram",
@@ -68,22 +70,22 @@ def tool_result(func):
     return run
 
 
-def check(client=None):
-    """Проверка бота и прав в каждом разрешённом канале."""
-    client = client or CLIENT
+def check(account=None):
+    """Проверка входа в аккаунт и прав в каждом разрешённом канале."""
+    account = account or ACCOUNT
     channels = allowed_channels()
     if not channels:
         raise TelegramError(
             "Не задан список каналов TELEGRAM_ALLOWED_CHANNELS (например, @bot_dev_py_ai).", "NO_CHANNELS"
         )
-    me = client.get_me()
+    me = account.get_me()
     reports = []
     for channel in channels:
         try:
-            chat = client.get_chat(channel)
-            member = client.get_chat_member(channel, me["id"])
-            reports.append(assess_member(channel, chat, member))
+            reports.append(assess_account(channel, account.get_channel(channel), account.get_my_rights(channel)))
         except TelegramError as exc:
+            if exc.code == "NOT_LOGGED_IN":
+                raise
             reports.append({
                 "channel": channel,
                 "ok": False,
@@ -91,15 +93,15 @@ def check(client=None):
             })
     return {
         "status": "ok" if all(report["ok"] for report in reports) else "attention",
-        "bot": {"username": me.get("username"), "name": me.get("first_name"), "id": me.get("id")},
+        "account": {"username": me.get("username"), "name": me.get("first_name"), "id": me.get("id")},
         "channels": reports,
     }
 
 
 @mcp.tool(
     description=(
-        "Проверить связь с Telegram: какой это бот, есть ли он в разрешённых каналах и с какими правами. "
-        "Предупреждает о недостающих и лишних правах. Ничего не отправляет и не меняет."
+        "Проверить вход в аккаунт Telegram: чей это аккаунт, найден ли каждый разрешённый канал и есть ли "
+        "у аккаунта права публикации, правки и закрепа. Ничего не отправляет и не меняет."
     )
 )
 @tool_result

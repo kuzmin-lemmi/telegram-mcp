@@ -4,28 +4,30 @@ import unittest
 from unittest.mock import patch
 
 from telegram_mcp import server
-from telegram_mcp.checks import assess_member, normalize_channel, parse_allowed_channels
+from telegram_mcp.account import AccountClient
+from telegram_mcp.checks import assess_account, assess_member, normalize_channel, parse_allowed_channels
 from telegram_mcp.client import TelegramClient, TelegramError
 
 TOKEN = "123456:SECRET-TOKEN-VALUE"
 
+OWNER = {"status": "creator", "can_post_messages": True, "can_edit_messages": True, "can_pin_messages": True}
 
-class FakeClient:
-    def __init__(self, member=None, fail_chat=False):
-        self.member = member or {"status": "administrator", "can_post_messages": True, "can_edit_messages": True}
+
+class FakeAccount:
+    def __init__(self, rights=None, fail_chat=None):
+        self.rights = rights or OWNER
         self.fail_chat = fail_chat
 
     def get_me(self):
-        return {"id": 42, "username": "pub_bot", "first_name": "Publisher"}
+        return {"id": 42, "username": "anton", "first_name": "Антон"}
 
-    def get_chat(self, chat_id):
+    def get_channel(self, channel):
         if self.fail_chat:
-            raise TelegramError("getChat: chat not found", "API_ERROR")
-        return {"id": -100, "title": "Bot Dev", "type": "channel"}
+            raise self.fail_chat
+        return {"id": 100, "title": "Bot Dev", "type": "channel", "username": channel.lstrip("@")}
 
-    def get_chat_member(self, chat_id, user_id):
-        assert user_id == 42
-        return self.member
+    def get_my_rights(self, channel):
+        return self.rights
 
 
 class ChannelNamesTests(unittest.TestCase):
@@ -41,6 +43,33 @@ class ChannelNamesTests(unittest.TestCase):
 
 
 class AssessTests(unittest.TestCase):
+    chat = {"title": "Bot Dev", "type": "channel"}
+
+    def test_owner_is_ok(self):
+        report = assess_account("@c", self.chat, OWNER)
+        self.assertTrue(report["ok"])
+        self.assertTrue(report["can_pin"])
+        self.assertEqual(report["warnings"], [])
+
+    def test_admin_without_pin_gets_a_warning(self):
+        rights = {"status": "administrator", "can_post_messages": True, "can_edit_messages": True}
+        report = assess_account("@c", self.chat, rights)
+        self.assertFalse(report["ok"])
+        self.assertTrue(report["can_post"])
+        self.assertIn("закрепление", report["warnings"][0])
+
+    def test_member_or_left_is_not_ok(self):
+        for status in ("member", "left"):
+            report = assess_account("@c", self.chat, {"status": status, "can_post_messages": True})
+            self.assertFalse(report["ok"])
+            self.assertFalse(report["can_post"])
+
+    def test_non_channel(self):
+        report = assess_account("@c", {"title": "G", "type": "supergroup"}, OWNER)
+        self.assertFalse(report["ok"])
+
+
+class BotAssessTests(unittest.TestCase):
     chat = {"title": "Bot Dev", "type": "channel"}
 
     def test_minimal_rights_are_ok(self):
@@ -69,31 +98,31 @@ class AssessTests(unittest.TestCase):
 
 
 class CheckToolTests(unittest.TestCase):
-    def run_tool(self, client, channels="@bot_dev_py_ai"):
+    def run_tool(self, account, channels="@bot_dev_py_ai"):
         with patch.dict(os.environ, {"TELEGRAM_ALLOWED_CHANNELS": channels}), \
-                patch.object(server, "CLIENT", client):
+                patch.object(server, "ACCOUNT", account):
             return json.loads(server.telegram_check())
 
     def test_ok(self):
-        result = self.run_tool(FakeClient())
+        result = self.run_tool(FakeAccount())
         self.assertEqual(result["status"], "ok")
-        self.assertEqual(result["bot"]["username"], "pub_bot")
+        self.assertEqual(result["account"]["username"], "anton")
+        self.assertEqual(result["channels"][0]["status"], "creator")
 
     def test_unreachable_channel_needs_attention(self):
-        result = self.run_tool(FakeClient(fail_chat=True))
+        result = self.run_tool(FakeAccount(fail_chat=TelegramError("No user has x as username", "NOT_FOUND")))
         self.assertEqual(result["status"], "attention")
-        self.assertIn("chat not found", result["channels"][0]["warnings"][0])
+        self.assertIn("No user has", result["channels"][0]["warnings"][0])
 
     def test_no_channels_configured_is_a_structured_error(self):
-        result = self.run_tool(FakeClient(), channels="")
-        self.assertEqual(result["status"], "error")
+        result = self.run_tool(FakeAccount(), channels="")
         self.assertEqual(result["code"], "NO_CHANNELS")
 
-    def test_missing_token_is_a_structured_error(self):
-        with patch.dict(os.environ, {"TELEGRAM_ALLOWED_CHANNELS": "@c"}), \
-                patch.object(server, "CLIENT", TelegramClient("")):
-            result = json.loads(server.telegram_check())
-        self.assertEqual(result["code"], "NO_TOKEN")
+    def test_missing_login_is_a_structured_error(self):
+        result = self.run_tool(AccountClient(load=lambda: None))
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["code"], "NOT_LOGGED_IN")
+        self.assertIn("telegram-mcp-login", result["message"])
 
 
 class ClientTests(unittest.TestCase):

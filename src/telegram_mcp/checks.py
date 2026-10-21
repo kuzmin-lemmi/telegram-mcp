@@ -1,4 +1,63 @@
-"""Проверка прав бота в каналах. Чистая логика без сетевых вызовов."""
+"""Проверка аккаунта и бота в каналах. Чистая логика без сетевых вызовов."""
+
+# Права, нужные серверу: публикация, правка постов и закреп.
+NEEDED_RIGHTS = {
+    "can_post_messages": "публикация сообщений",
+    "can_edit_messages": "редактирование сообщений",
+    "can_pin_messages": "закрепление сообщений",
+}
+
+
+def normalize_channel(value):
+    """``https://t.me/name``, ``t.me/name`` и ``name`` превращаются в ``@name``; числовые ID остаются."""
+    value = value.strip()
+    for prefix in ("https://t.me/", "http://t.me/", "t.me/"):
+        if value.lower().startswith(prefix):
+            value = value[len(prefix):]
+            break
+    value = value.split("/")[0].split("?")[0]
+    if not value:
+        raise ValueError("пустое имя канала")
+    if value.lstrip("-").isdigit():
+        return value
+    return value if value.startswith("@") else "@" + value
+
+
+def parse_allowed_channels(raw):
+    return [normalize_channel(part) for part in (raw or "").split(",") if part.strip()]
+
+
+def assess_account(channel, chat, rights):
+    """Сводка о том, как аккаунт состоит в канале, и предупреждения."""
+    warnings = []
+    status = rights.get("status")
+    is_admin = status in ("creator", "administrator")
+    report = {
+        "channel": channel,
+        "title": chat.get("title"),
+        "type": chat.get("type"),
+        "status": status,
+        "can_post": is_admin and bool(rights.get("can_post_messages")),
+        "can_edit": is_admin and bool(rights.get("can_edit_messages")),
+        "can_pin": is_admin and bool(rights.get("can_pin_messages")),
+        "warnings": warnings,
+    }
+    if chat.get("type") != "channel":
+        warnings.append(f"Это не канал, а «{chat.get('type')}». Сервер рассчитан на каналы.")
+    if is_admin:
+        missing = [label for key, label in NEEDED_RIGHTS.items() if not rights.get(key)]
+        if missing:
+            warnings.append("Не хватает прав администратора: " + ", ".join(missing) + ".")
+    else:
+        warnings.append(
+            f"Аккаунт не администратор канала (статус: {status}). "
+            "Нужны права: " + ", ".join(NEEDED_RIGHTS.values()) + "."
+        )
+    report["ok"] = is_admin and not warnings
+    return report
+
+
+# -- бот: публикация до перехода на аккаунт (этап 3) ---------------------------
 
 # Этих прав для работы не нужно; если они включены, сервер предупреждает.
 EXTRA_RIGHTS = (
@@ -26,25 +85,6 @@ RIGHTS_LABELS = {
     "can_edit_stories": "правка историй",
     "can_delete_stories": "удаление историй",
 }
-
-
-def normalize_channel(value):
-    """``https://t.me/name``, ``t.me/name`` и ``name`` превращаются в ``@name``; числовые ID остаются."""
-    value = value.strip()
-    for prefix in ("https://t.me/", "http://t.me/", "t.me/"):
-        if value.lower().startswith(prefix):
-            value = value[len(prefix):]
-            break
-    value = value.split("/")[0].split("?")[0]
-    if not value:
-        raise ValueError("пустое имя канала")
-    if value.lstrip("-").isdigit():
-        return value
-    return value if value.startswith("@") else "@" + value
-
-
-def parse_allowed_channels(raw):
-    return [normalize_channel(part) for part in (raw or "").split(",") if part.strip()]
 
 
 def assess_member(channel, chat, member):
