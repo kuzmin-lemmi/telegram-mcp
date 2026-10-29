@@ -15,15 +15,60 @@ from . import account_store
 from .account import new_client
 
 
+CODE_ATTEMPTS = 3
+
+
+def code_destination(code_type):
+    """Куда Telegram отправил код — по типу из ответа auth.sendCode."""
+    from telethon.tl.types import auth
+
+    name = type(code_type).__name__
+    if isinstance(code_type, auth.SentCodeTypeApp):
+        return "в приложение Telegram: чат «Telegram» с синей галочкой на другом вашем устройстве (загляните и в Архив)"
+    if isinstance(code_type, auth.SentCodeTypeEmailCode):
+        return f"на почту для входа {code_type.email_pattern}"
+    if isinstance(code_type, auth.SentCodeTypeMissedCall):
+        return f"пропущенным звонком: код — последние {code_type.length} цифр номера, с которого позвонят"
+    if isinstance(code_type, (auth.SentCodeTypeCall, auth.SentCodeTypeFlashCall)):
+        return "звонком"
+    if isinstance(code_type, auth.SentCodeTypeSetUpEmailRequired):
+        return ("никуда: Telegram требует сначала привязать почту для входа. "
+                "В приложении: Настройки → Конфиденциальность → Почта для входа")
+    if "Sms" in name:
+        return "по SMS"
+    return f"способом {name}"
+
+
 async def sign_in(api_id, api_hash):
     """Интерактивный вход. Возвращает (имя для показа, строка сессии)."""
+    from telethon import errors
+
     client = new_client(api_id, api_hash)
     try:
-        await client.start(
-            phone=lambda: normalize_phone(input("Номер телефона (например, 89991234567): ")),
-            code_callback=lambda: input("Код из Telegram (придёт в приложение, не по SMS): ").strip(),
-            password=lambda: getpass.getpass("Облачный пароль (символы не отображаются): "),
-        )
+        await client.connect()
+        phone = normalize_phone(input("Номер телефона (например, 89991234567): "))
+        sent = await client.send_code_request(phone)
+        print(f"Код отправлен {code_destination(sent.type)}.")
+        if sent.next_type:
+            print("Если код не пришёл за пару минут, нажмите Enter без кода — Telegram отправит его другим способом.")
+        attempts = 0
+        while True:
+            code = input("Код: ").strip()
+            if not code:
+                sent = await client.send_code_request(phone, force_sms=True)
+                print(f"Код отправлен повторно {code_destination(sent.type)}.")
+                continue
+            try:
+                await client.sign_in(phone, code)
+                break
+            except errors.SessionPasswordNeededError:
+                await client.sign_in(password=getpass.getpass("Облачный пароль (символы не отображаются): "))
+                break
+            except errors.PhoneCodeInvalidError:
+                attempts += 1
+                if attempts >= CODE_ATTEMPTS:
+                    raise
+                print("Неверный код, попробуйте ещё раз.")
         me = await client.get_me()
         return display_name(me), client.session.save()
     finally:
@@ -77,6 +122,14 @@ def describe(exc):
         return "Telegram не принял api_id или api_hash. Проверьте их на my.telegram.org."
     if isinstance(exc, errors.PhoneNumberInvalidError):
         return "Неверный номер телефона."
+    if isinstance(exc, errors.PhoneCodeInvalidError):
+        return "Код трижды введён неверно."
+    if isinstance(exc, errors.PhoneCodeExpiredError):
+        return "Код устарел. Запустите вход заново."
+    if isinstance(exc, errors.PasswordHashInvalidError):
+        return "Неверный облачный пароль."
+    if isinstance(exc, errors.SendCodeUnavailableError):
+        return "Telegram исчерпал способы отправки кода. Подождите несколько часов и попробуйте снова."
     if isinstance(exc, errors.FloodWaitError):
         return f"Слишком много попыток. Telegram просит подождать {exc.seconds} с."
     if isinstance(exc, errors.RPCError):

@@ -1,3 +1,4 @@
+import asyncio
 import io
 import sys
 import unittest
@@ -86,6 +87,56 @@ class LoginTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(closed, ["OLD"])
         self.assertIn(SESSION, fake.stored)
+
+    def test_code_destination_is_explained(self):
+        from telethon.tl.types import auth
+
+        self.assertIn("Архив", login.code_destination(auth.SentCodeTypeApp(length=5)))
+        self.assertIn("SMS", login.code_destination(auth.SentCodeTypeSms(length=5)))
+        self.assertIn("a***@mail.ru", login.code_destination(auth.SentCodeTypeEmailCode("a***@mail.ru", 6)))
+        self.assertIn("почту для входа", login.code_destination(auth.SentCodeTypeSetUpEmailRequired()))
+
+    def test_sign_in_flow_with_resend_and_cloud_password(self):
+        from types import SimpleNamespace
+
+        from telethon.tl.types import auth
+
+        class FakeClient:
+            def __init__(self):
+                self.requests = []
+                self.signed = []
+                self.session = SimpleNamespace(save=lambda: SESSION)
+
+            async def connect(self):
+                pass
+
+            async def disconnect(self):
+                pass
+
+            async def send_code_request(self, phone, force_sms=False):
+                self.requests.append((phone, force_sms))
+                kind = auth.SentCodeTypeSms(length=5) if force_sms else auth.SentCodeTypeApp(length=5)
+                return SimpleNamespace(type=kind, next_type=object())
+
+            async def sign_in(self, phone=None, code=None, password=None):
+                self.signed.append((phone, code, password))
+                if password is None:
+                    raise errors.SessionPasswordNeededError(None)
+
+            async def get_me(self):
+                return SimpleNamespace(first_name="Антон", last_name=None, username="anton")
+
+        fake = FakeClient()
+        answers = iter(["89878002113", "", "12345"])
+        out = io.StringIO()
+        with patch.object(login, "new_client", lambda *a: fake), \
+                patch("builtins.input", lambda prompt="": next(answers)), \
+                patch("getpass.getpass", return_value="cloud"), redirect_stdout(out):
+            name, session = asyncio.run(login.sign_in(12345, API_HASH))
+        self.assertEqual((name, session), ("Антон (@anton)", SESSION))
+        self.assertEqual(fake.requests, [("+79878002113", False), ("+79878002113", True)])
+        self.assertEqual(fake.signed, [("+79878002113", "12345", None), (None, None, "cloud")])
+        self.assertIn("повторно по SMS", out.getvalue())
 
     def test_phone_is_normalized(self):
         for raw in ("89878002113", "8 (987) 800-21-13", "9878002113", "+7 987 800 21 13", "79878002113"):
