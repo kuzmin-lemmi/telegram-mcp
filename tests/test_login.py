@@ -31,10 +31,9 @@ class LoginTests(unittest.TestCase):
                   log_out=logged_out):
         fake = FakeKeyring(stored)
         out = io.StringIO()
-        answers = iter(inputs)
+        answers = iter((*inputs, api_hash))
         with patch.dict(sys.modules, {"keyring": fake}), \
                 patch("builtins.input", lambda prompt="": next(answers)), \
-                patch("getpass.getpass", return_value=api_hash), \
                 patch.object(login, "sign_in", sign_in), \
                 patch.object(login, "log_out", log_out), \
                 patch.object(login, "whoami", known), \
@@ -87,6 +86,11 @@ class LoginTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(closed, ["OLD"])
         self.assertIn(SESSION, fake.stored)
+
+    def test_phone_is_normalized(self):
+        for raw in ("89878002113", "8 (987) 800-21-13", "9878002113", "+7 987 800 21 13", "79878002113"):
+            self.assertEqual(login.normalize_phone(raw), "+79878002113", raw)
+        self.assertEqual(login.normalize_phone("+44 20 7946 0958"), "+442079460958")
 
     def test_status_and_logout(self):
         code, output, _ = self.run_login(["--status"], stored=OLD)

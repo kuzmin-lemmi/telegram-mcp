@@ -20,7 +20,7 @@ async def sign_in(api_id, api_hash):
     client = new_client(api_id, api_hash)
     try:
         await client.start(
-            phone=lambda: input("Номер телефона в формате +7…: ").strip(),
+            phone=lambda: normalize_phone(input("Номер телефона (например, 89991234567): ")),
             code_callback=lambda: input("Код из Telegram (придёт в приложение, не по SMS): ").strip(),
             password=lambda: getpass.getpass("Облачный пароль (символы не отображаются): "),
         )
@@ -54,6 +54,16 @@ async def log_out(account):
             await client.disconnect()
 
 
+def normalize_phone(raw):
+    """Российские ``8…`` и ``9…`` без кода страны превращаются в ``+7…``."""
+    digits = re.sub(r"\D", "", raw)
+    if len(digits) == 11 and digits[0] == "8":
+        return "+7" + digits[1:]
+    if len(digits) == 10 and digits[0] == "9":
+        return "+7" + digits
+    return "+" + digits
+
+
 def display_name(me):
     name = " ".join(part for part in (me.first_name, me.last_name) if part)
     return f"{name} (@{me.username})" if me.username else name
@@ -79,7 +89,7 @@ def ask_credentials():
     if not api_id.isdigit():
         print("api_id — это число. Ничего не сохранено.")
         return None
-    api_hash = getpass.getpass("api_hash (символы не отображаются): ").strip().lower()
+    api_hash = input("api_hash (32 символа с my.telegram.org): ").strip().lower()
     if not re.fullmatch(r"[0-9a-f]{32}", api_hash):
         print("api_hash — 32 символа из цифр и букв a–f. Ничего не сохранено.")
         return None
